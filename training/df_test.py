@@ -6,38 +6,39 @@ from sklearn.metrics import classification_report
 
 from download import preprocess_text
 
-test_data = pd.read_csv("india-news-headlines.csv")
+test_data = pd.read_csv("twitter_validation.csv")
 print(test_data.shape)
-
+print(test_data.columns.tolist())
+test_data.columns = [f"col_{i}" for i in range(test_data.shape[1])]
 test_data = test_data.rename(columns={
-    f"headline_text": "text",
+    f"col_{3}": "text",
+    f"col_{2}": "sentiment"
 })
 
-test_data_sample = test_data.sample(n=1000, random_state=42)
+test_data["cleaned_text"] = test_data["text"].apply(preprocess_text)
+print(test_data.columns.tolist())
 
-test_data_sample["cleaned_text"] = test_data_sample["text"].apply(preprocess_text)
-print(test_data_sample.columns.tolist())
 
 loaded_model = joblib.load("sentiment_model.pkl")
 loaded_tfidf = joblib.load("tfidf_vectorizer.pkl")
 
-X_test = loaded_tfidf.transform(test_data_sample["cleaned_text"])
+X_test = loaded_tfidf.transform(test_data["cleaned_text"])
 
 test_pred = loaded_model.predict(X_test)
 test_prob = loaded_model.predict_proba(X_test)
 
-test_data_sample["predicted_sentiment"] = test_pred
-test_data_sample["prediction_confidence"] = np.max(test_prob, axis=1)
+test_data["predicted_sentiment"] = test_pred
+test_data["prediction_confidence"] = np.max(test_prob, axis=1)
 
-def model_evaluation(y_true, y_pred, y_prob, model_name="Sentiment Model"):
+def model_evaluation(y_true, y_pred, model_name="Sentiment Model"):
     accuracy = accuracy_score(y_true, y_pred)
-    precision = precision_score((y_true, y_pred), y_prob, average="weighted", zero_division=0)
+    precision = precision_score(y_true, y_pred, average="weighted", zero_division=0)
     recall = recall_score(y_true, y_pred, average="weighted", zero_division=0)
 
     print(f"Accuracy: {accuracy:.4f} ({accuracy*100:.2f})")
     print(f"Precision: {precision:.4f}")
     print(f"Recall: {recall:.4f}")
-    print(classification_report(y_true, y_pred , target_names=['Negative', 'Neutral', 'Positive'], zero_division=0))
+    print(classification_report(y_true, y_pred , target_names=['Irrelevant', 'Negative', 'Neutral', 'Positive'], zero_division=0))
 
     return {
         "accuracy": accuracy,
@@ -64,17 +65,14 @@ def analyze_predictions(df, text_col="text", pred_col='predicted_sentiment', tru
         percentage = (count / len(df)) * 100
         print(f"Class {class_label}: {count} examples ({percentage:.1f}%)")
 
-if "sentiment" in test_data_sample.columns:
-    true_labels = test_data_sample["sentiment"]
-    metrics = model_evaluation(true_labels, test_pred, test_prob)
-    print("\nMy")
-    test_accuracy = accuracy_score(test_data_sample["sentiment"], test_pred)
-    print("Test Accuracy: ", test_accuracy)
-    print(classification_report(test_data_sample["sentiment"], test_pred))
+if "sentiment" in test_data.columns:
+    true_labels = test_data["sentiment"]
+    metrics = model_evaluation(true_labels, test_pred)
+    analyze_predictions(test_data, true_col="sentiment")
 else:
-    print(test_data_sample["prediction_confidence"].describe())
-    analyze_predictions(test_data_sample)
+    print(test_data["prediction_confidence"].describe())
+    analyze_predictions(test_data)
 
 print("\n")
-for index, row in test_data_sample.head(20).iterrows():
+for index, row in test_data.head(20).iterrows():
     print(f"{row['text']} -> {row['predicted_sentiment']}")
