@@ -19,8 +19,8 @@ test_data["cleaned_text"] = test_data["text"].apply(preprocess_text)
 print(test_data.columns.tolist())
 
 
-loaded_model = joblib.load("sentiment_model.pkl")
-loaded_tfidf = joblib.load("tfidf_vectorizer.pkl")
+loaded_model = joblib.load("sentiment_model_1.pkl")
+loaded_tfidf = joblib.load("tfidf_vectorizer_1.pkl")
 
 X_test = loaded_tfidf.transform(test_data["cleaned_text"])
 

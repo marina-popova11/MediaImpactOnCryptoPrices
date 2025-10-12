@@ -7,23 +7,21 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import classification_report
 
-# from preprocess import preprocess_text
-
 train_data = pd.read_csv("twitter_training.csv", header=None)
-print("Train_data shape: ", train_data.shape)
-print(train_data.head())
-
-for i in range(3):
-    print(f"row {i}: {train_data.iloc[i].tolist()}")
-text_column = 3
-sentiment_column = 2
 train_data.columns = [f"col_{i}" for i in range(train_data.shape[1])]
 train_data = train_data.rename(columns={
-    f"col_{text_column}": "text",
-    f"col_{sentiment_column}": "sentiment"
+    f"col_{3}": "text",
+    f"col_{2}": "sentiment"
 })
 
 print(train_data["sentiment"].value_counts())
+
+new_train_data = pd.read_csv("train_with_sentiment.csv")
+new_train_data = new_train_data.rename(columns={"tweet": "text"})
+combined_data = pd.concat([train_data[["text", "sentiment"]], new_train_data[["text", "sentiment"]]], ignore_index=True)
+
+print(combined_data.shape)
+print(combined_data["sentiment"].value_counts())
 
 import nltk
 import re
@@ -47,11 +45,10 @@ def preprocess_text(text):
     tokens = [t for t in tokens if t not in stop_words]
     lemmatizer = WordNetLemmatizer()
     tokens = [lemmatizer.lemmatize(t) for t in tokens]
-
     return ' '.join(tokens)
 
-train_data["cleaned_data"] = train_data["text"].apply(preprocess_text)
-print(train_data.columns.tolist())
+combined_data["cleaned_text"] = combined_data["text"].apply(preprocess_text)
+print(combined_data.columns.tolist())
 
 tfidf = TfidfVectorizer(
     max_features=5000,
@@ -59,10 +56,8 @@ tfidf = TfidfVectorizer(
     ngram_range=(1, 2)
 )
 
-X_train = tfidf.fit_transform(train_data["cleaned_data"])
-y_train = train_data["sentiment"]
-
-print(f"TF-IDF matrix shape: {X_train.shape}")
+X_train = tfidf.fit_transform(combined_data["cleaned_text"])
+y_train = combined_data["sentiment"]
 
 model = LogisticRegression(
     random_state=42,
@@ -75,6 +70,6 @@ train_accuracy = accuracy_score(y_train, train_predictions)
 print(f"Train Accuracy: {train_accuracy:.4f}")
 print(classification_report, train_predictions)
 
-joblib.dump(model, 'sentiment_model.pkl')
-joblib.dump(tfidf, 'tfidf_vectorizer.pkl')
+joblib.dump(model, 'sentiment_model_1.pkl')
+joblib.dump(tfidf, 'tfidf_vectorizer_1.pkl')
 print("save")
