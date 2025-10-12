@@ -23,6 +23,8 @@ combined_data = pd.concat([train_data[["text", "sentiment"]], new_train_data[["t
 print(combined_data.shape)
 print(combined_data["sentiment"].value_counts())
 
+combined_data = combined_data.sample(frac=1, random_state=42).reset_index(drop=True)
+
 import nltk
 import re
 from nltk.corpus import stopwords
