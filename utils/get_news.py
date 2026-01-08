@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import time
+import pytz
 import base64
 
 BASE_KEYWORDS = [
@@ -37,8 +38,9 @@ KEYWORD_GROUPS = {
     "entity": ENTITY_KEYWORDS
 }
 
+# Fetch news from CryptoCompere API.
 URL = "https://min-api.cryptocompare.com/data/v2/news/"
-
+API_KEY_CRYPTOCOMPARE = ""
 def fetch_cryptocompare_news(query: dict, language: str = "EN",
                              start_date="2025-10-01", end_date="2025-10-31",
                              sleep_time=1):
@@ -51,7 +53,7 @@ def fetch_cryptocompare_news(query: dict, language: str = "EN",
     params = {
         "lang": language,
         "categories": "Blockchain,Altcoin,Crypto",
-        "api_key": API_KEY
+        "api_key": API_KEY_CRYPTOCOMPARE
     }
 
     try:
@@ -107,10 +109,10 @@ def fetch_cryptocompare_news(query: dict, language: str = "EN",
         print("No news found")
         return pd.DataFrame()
 
+# Fetch news from Reddit.
 CLIENT_ID = ""
 CLIENT_SECRET = ""
 USER_AGENT = "CryptoNewsAnalyzer"
-
 def get_reddit_access_token():
     auth_string = f"{CLIENT_ID}:{CLIENT_SECRET}"
     auth_bytes = auth_string.encode('utf-8')
@@ -272,8 +274,8 @@ def fetch_reddit_news(query: dict, start_date="2025-10-01", end_date="2025-10-31
     else:
         return pd.DataFrame()
 
+# Fetch news from NewsAPI.
 API_KEY_NEWS_API = ""
-
 def fetch_newsapi_news(query: dict, start_date="2025-10-01", end_date="2025-10-31", language="en", posts_per_keyword=50,
                        sleep_time=2):
     all_posts = []
@@ -355,6 +357,202 @@ def fetch_newsapi_news(query: dict, start_date="2025-10-01", end_date="2025-10-3
         df["window"] = df["publishedAt"].dt.floor("1h")
         df = df.sort_values("publishedAt")
         print(len(df))
+        return df
+    else:
+        print("No articles found.")
+        return pd.DataFrame()
+
+# Fetch news from CoinGecko.
+def process_coingecko_articles(articles, coin_id, start_dt, end_dt):
+    posts = []
+    for art in articles:
+        published_at_str = art.get("published_at")
+        if not published_at_str:
+            continue
+
+        try:
+            published_dt = pd.to_datetime(published_at_str, utc=True)
+        except Exception:
+            continue
+
+        # Filter by date range
+        if not (start_dt <= published_dt < end_dt):
+            continue
+
+        title = art.get("title", "") or ""
+        body = art.get("body", "") or ""
+        text = f"{title}. {body}".strip()
+        if not text:
+            continue
+
+        post = {
+            "title": title,
+            "description": body[:200],
+            "publishedAt": published_dt,
+            "source": art.get("source", ""),
+            "url": art.get("url", ""),
+            "text": text,
+            "coin_id": coin_id
+        }
+        posts.append(post)
+    return posts
+
+def fetch_coingecko_news(coins: list=None, start_date="2025-10-01", end_date="2025-10-31", sleep_time=1, max_articles_per_coin=100):
+    all_posts = []
+    start_dt = pd.to_datetime(start_date).tz_localize("UTC")
+    end_dt = pd.to_datetime(end_date).tz_localize("UTC") + pd.Timedelta(days=1)
+
+    base_url = "https://api.coingecko.com/api/v3/"
+    if not coins:
+        print("Fetching news:")
+        try:
+            response = requests.get(f"{base_url}news", timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                articles = data.get("data", [])
+                all_posts.extend(process_coingecko_articles(articles, None, start_dt, end_dt))
+            else:
+                print(f"Error {response.status_code}: {response.text[:150]}")
+        except Exception as e:
+            print(f"Error fetching general news: {e}")
+        time.sleep(sleep_time)
+    else:
+        for coin_id in coins:
+            print(f"Fetching news for coin: {coin_id}")
+            try:
+                response = requests.get(f"{base_url}coins/{coin_id}/news", timeout=15)
+                if response.status_code == 429:
+                    print("Rate limit hit. Sleeping 60s...")
+                    time.sleep(60)
+                    continue
+                elif response.status_code != 200:
+                    print(f"Error {response.status_code} for {coin_id}: {response.text[:150]}")
+                    time.sleep(sleep_time)
+                    continue
+
+                data = response.json()
+                articles = data.get("data", [])
+                filtered = process_coingecko_articles(articles, coin_id, start_dt, end_dt)
+                all_posts.extend(filtered)
+                print(f"Found {len(filtered)} articles for {coin_id} in date range")
+
+            except Exception as e:
+                print(f"Error fetching news for {coin_id}: {e}")
+            time.sleep(sleep_time)
+
+    if all_posts:
+        df = pd.DataFrame(all_posts)
+        df["publishedAt"] = pd.to_datetime(df["publishedAt"], utc=True).dt.tz_convert(None)
+        df.dropna(subset=["text", "publishedAt"], inplace=True)
+        df["window"] = df["publishedAt"].dt.floor("1h")
+        df = df.sort_values("publishedAt").reset_index(drop=True)
+        print(f"Total articles after filtering: {len(df)}")
+        return df
+    else:
+        print("No articles found in the specified date range.")
+        return pd.DataFrame()
+
+# Fetch news from GNews API.
+API_KEY_GNEWS = ""
+def fetch_gnews_news(query: dict, start_date="2025-10-01", end_date="2025-10-31", language="en", posts_per_keyword=50, sleep_time=2):
+    all_posts = []
+    all_keywords = [word for words in query.values() for word in words]
+
+    start_dt = pd.to_datetime(start_date, utc=True)
+    end_dt = pd.to_datetime(end_date, utc=True) + pd.Timedelta(days=1)
+
+    base_url = "https://gnews.io/api/v4/search"
+
+    for word in all_keywords:
+        print(f"Searching for '{word}' on GNews...")
+        page = 1
+        total_collected = 0
+        max_pages = (posts_per_keyword // 10) + 1
+
+        while total_collected < posts_per_keyword and page <= max_pages:
+            params = {
+                "q": word,
+                "lang": language,
+                "country": "US",
+                "max": 10,
+                "page": page,
+                "token": API_KEY_GNEWS
+            }
+
+            try:
+                response = requests.get(base_url, params=params, timeout=15)
+                if response.status_code == 429:
+                    print("Rate limit reached. Sleeping for 60 seconds...")
+                    time.sleep(60)
+                    continue
+                elif response.status_code != 200:
+                    print(f"Error {response.status_code}: {response.text[:150]}")
+                    break
+
+                data = response.json()
+                articles = data.get("articles", [])
+                if not articles:
+                    break
+
+                count = 0
+                for art in articles:
+                    published_at_str = art.get("publishedAt")
+                    if not published_at_str:
+                        continue
+
+                    try:
+                        published_dt = pd.to_datetime(published_at_str, utc=True)
+                    except Exception:
+                        continue
+
+                    if not (start_dt <= published_dt < end_dt):
+                        continue
+
+                    title = art.get("title", "") or ""
+                    description = art.get("description", "") or ""
+                    content = art.get("content", "") or ""
+                    url = art.get("url", "")
+
+                    text = f"{title}. {description}. {content}"
+
+                    text_lower = text.lower()
+                    matched_keywords = [kw for kw in all_keywords if kw.lower() in text_lower]
+                    if not matched_keywords:
+                        continue
+
+                    article = {
+                        "title": title,
+                        "description": description,
+                        "publishedAt": published_dt,
+                        "source": art.get("source", {}).get("name", ""),
+                        "url": url,
+                        "text": text
+                    }
+                    all_posts.append(article)
+                    count += 1
+                    total_collected += 1
+
+                    if total_collected >= posts_per_keyword:
+                        break
+
+                print(f"  Page {page}: found {count} relevant articles in date range for '{word}'")
+                if len(articles) < 10:
+                    break
+
+                page += 1
+                time.sleep(sleep_time)
+
+            except Exception as e:
+                print(f"Error fetching for '{word}' (page {page}): {e}")
+                break
+
+    if all_posts:
+        df = pd.DataFrame(all_posts)
+        df["publishedAt"] = pd.to_datetime(df["publishedAt"], utc=True).dt.tz_convert(None)
+        df.dropna(subset=["text", "publishedAt"], inplace=True)
+        df["window"] = df["publishedAt"].dt.floor("1h")
+        df = df.sort_values("publishedAt").reset_index(drop=True)
+        print(f"Total relevant articles after filtering: {len(df)}")
         return df
     else:
         print("No articles found.")
